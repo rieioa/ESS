@@ -44,6 +44,7 @@ SIGNAL_BOUNDS = {
     "Tmin": (-50.0, 80.0),
     "chargetime": (0.0, 500.0),
 }
+RAW_ONLY_COLUMNS = {"chargetime"}
 
 
 def batch_name_from_path(path: Path) -> str:
@@ -189,7 +190,7 @@ def clip_to_physical_bounds(series: pd.Series, signal_name: str) -> pd.Series:
     return out
 
 
-def hampel_filter(series: pd.Series, window: int = 5, n_sigma: float = 3.0) -> pd.Series:
+def hampel_filter(series: pd.Series, window: int = 7, n_sigma: float = 5.0) -> pd.Series:
     values = series.astype(float).copy()
     rolling_median = values.rolling(window=window, center=True, min_periods=1).median()
     abs_diff = (values - rolling_median).abs()
@@ -214,6 +215,10 @@ def replace_with_neighbor_values(series: pd.Series) -> pd.Series:
 
 
 def preprocess_signal(series: pd.Series, signal_name: str) -> tuple[pd.Series, pd.Series]:
+    if signal_name in RAW_ONLY_COLUMNS:
+        cleaned = pd.to_numeric(series, errors="coerce")
+        return cleaned, pd.Series(False, index=series.index, dtype=bool)
+
     bounded = clip_to_physical_bounds(series, signal_name)
     despiked = hampel_filter(bounded)
     was_touched = bounded.isna() | despiked.isna()
