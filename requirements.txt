@@ -1,0 +1,21 @@
+# ============================================================
+# Integrated_EDA.ipynb — 의존 패키지
+# ============================================================
+
+# Jupyter 노트북 실행 환경
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# 데이터 처리
+numpy>=1.24.0
+pandas>=1.5.0
+
+# .mat 파일 로더 (MATLAB v7.3 / HDF5 형식)
+mat73>=0.65
+scipy>=1.10.0          # scipy.io.loadmat (fallback) + gaussian_filter1d, stats
+
+# 시각화
+matplotlib>=3.6.0
+
+# (선택) 노트북 내 이미지 표시 — IPython.display
+ipython>=8.0.0
