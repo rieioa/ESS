@@ -36,9 +36,10 @@ FEATURES_CSV = os.path.join(os.path.dirname(__file__), '..', 'preprocessed_data'
 
 BATCH1_NAME = '2017-05-12'
 BATCH2_NAME = '2018-02-20'
+BATCH4_NAME = '2018-04-12'
 
 # Features to use — pass None to use all columns, or specify a subset.
-SELECTED_FEATURES = ['delta_q_min', 'log_delta_q_var']
+SELECTED_FEATURES = ['delta_q_min', 'log_delta_q_var', 'qdlin_010_var', 'delta_q_var']
 
 
 # ── Evaluation metrics ────────────────────────────────────────────────────────
@@ -112,10 +113,15 @@ def load_dataset() -> tuple[pd.DataFrame, pd.DataFrame]:
         df2 : Batch 2 DataFrame (same schema)
     """
     df = pd.read_csv(FEATURES_CSV)
+    if 'log_delta_q_var' not in df.columns and 'delta_q_var' in df.columns:
+        df['log_delta_q_var'] = np.log(df['delta_q_var'].clip(lower=1e-10))
     df1 = df[df['batch_name'] == BATCH1_NAME].copy()
+    # Exclude censored cells (cell_000~004: never reached end-of-life)
+    df1 = df1.iloc[5:].reset_index(drop=True)
     df2 = df[df['batch_name'] == BATCH2_NAME].copy()
-    print(f"  Batch 1: {len(df1)} cells, Batch 2: {len(df2)} cells\n")
-    return df1, df2
+    df4 = df[df['batch_name'] == BATCH4_NAME].copy()
+    print(f"  Batch 1: {len(df1)} cells (excluded 5 censored), Batch 2: {len(df2)} cells, Batch 4: {len(df4)} cells\n")
+    return df1, df2, df4
 
 
 # ── Main experiment ───────────────────────────────────────────────────────────
@@ -123,7 +129,7 @@ def load_dataset() -> tuple[pd.DataFrame, pd.DataFrame]:
 def main():
     # 1. Load data
     print("Loading features.csv...")
-    df1, df2 = load_dataset()
+    df1, df2, df4 = load_dataset()
 
     # 2. Select features (dynamic — edit SELECTED_FEATURES at top to experiment)
     feature_cols = get_features(
@@ -140,13 +146,16 @@ def main():
     X2 = df2[feature_cols].values
     y2 = df2['cycle_life'].values
 
+    X4 = df4[feature_cols].values
+    y4 = df4['cycle_life'].values
+
     # 4. Hold-out split of Batch 1 (cell-level, no leakage)
     X_train, X_valid, y_train, y_valid = cell_holdout_split(
         X1, y1, cell_ids, val_ratio=0.2, seed=RANDOM_SEED
     )
 
     # 5. Train and evaluate each model
-    for model_name in ['elastic_net', 'xgboost']:
+    for model_name in ['linear', 'elastic_net', 'xgboost']:
         print(f"Running: {model_name} ...")
 
         # 5a. Cross-validation on full Batch 1 → Train score
@@ -162,25 +171,28 @@ def main():
             train_model(model_valid, X_train, y_train)
         valid_metrics = evaluate(model_valid, X_valid, y_valid)
 
-        # 5c. Final model trained on full Batch 1 → Test score on Batch 2
+        # 5c. Final model trained on full Batch 1 → Test scores
         model_final = get_model(model_name)
         if model_name == 'xgboost':
             train_xgboost(model_final, X1, y1, X2, y2)
         else:
             train_model(model_final, X1, y1)
-        test_metrics = evaluate(model_final, X2, y2)
+        test_metrics  = evaluate(model_final, X2, y2)
+        test4_metrics = evaluate(model_final, X4, y4)
 
         # 5d. Save the final model
         save_model(model_final, name=f"{model_name}_final")
 
         # 5e. Report
-        label = 'Elastic Net' if model_name == 'elastic_net' else 'XGBoost'
+        label_map = {'linear': 'Linear', 'elastic_net': 'Elastic Net', 'xgboost': 'XGBoost'}
+        label = label_map[model_name]
         print_results_table(
             model_name    = label,
             train_cv_mape = cv_mape,
             valid_mape    = valid_metrics['mape'],
             test_mape     = test_metrics['mape'],
         )
+        print(f"  Batch 4 (2018-04-12) — MAPE: {test4_metrics['mape']:.2f}%  RMSE: {test4_metrics['rmse']:.1f}")
 
         print(f"  RMSE — Valid: {valid_metrics['rmse']:.1f}  |  "
               f"Test: {test_metrics['rmse']:.1f}\n")
