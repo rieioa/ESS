@@ -34,7 +34,7 @@ TARGET      = 9.1    # Paper baseline MAPE (%)
 FEATURES_CSV = os.path.join(os.path.dirname(__file__), '..', 'preprocessed_data', 'features.csv')
 
 BATCH1_NAME = '2017-05-12'
-BATCH2_NAME = '2018-04-12'
+BATCH2_NAME = '2018-02-20'
 
 # Features to use — pass None to use all columns, or specify a subset.
 SELECTED_FEATURES = ['delta_q_min', 'log_delta_q_var']
