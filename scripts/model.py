@@ -10,12 +10,20 @@ Available models:
     - xgboost     : XGBRegressor
 """
 
-from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import ElasticNet, LinearRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 RANDOM_SEED = 42
+
+
+def get_linear() -> Pipeline:
+    """OLS with StandardScaler. Best for small n when features are already invariant."""
+    return Pipeline([
+        ('scaler', StandardScaler()),
+        ('model',  LinearRegression()),
+    ])
 
 
 def get_elastic_net() -> Pipeline:
@@ -71,6 +79,7 @@ def get_model(name: str):
         ValueError if name is not recognised.
     """
     registry = {
+        'linear':      get_linear,
         'elastic_net': get_elastic_net,
         'xgboost':     get_xgboost,
     }

@@ -3,3 +3,4 @@ venv/
 docs/
 archive/*
 data/*
+__pycache__

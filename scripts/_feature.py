@@ -20,18 +20,14 @@ from preprocess import extract_summary_rows
 
 ARCHIVE_DIR      = Path(__file__).parent.parent / 'data'
 PREPROCESSED_DIR = Path(__file__).parent.parent / 'preprocessed_data'
-OUTPUT_PATH      = PREPROCESSED_DIR / 'cycle_life_2.csv'
+FEATURES_PATH    = PREPROCESSED_DIR / 'features.csv'
+
+BATCH2_MAT = ARCHIVE_DIR / '2018-02-20_batchdata_updated_struct_errorcorrect.mat'
 
 
-def load_raw_summary() -> pd.DataFrame:
-    """스무딩 없이 raw summary만 추출"""
-    mat_files = sorted(ARCHIVE_DIR.glob('*.mat'))
-    if not mat_files:
-        raise FileNotFoundError(f'archive에 .mat 없음: {ARCHIVE_DIR}')
-    return pd.concat(
-        [extract_summary_rows(f, drop_missing_cycle_life=True) for f in mat_files],
-        ignore_index=True,
-    )
+def load_batch2_raw() -> pd.DataFrame:
+    """Batch 2 raw summary만 추출 (스무딩 없음)"""
+    return extract_summary_rows(BATCH2_MAT, drop_missing_cycle_life=False)
 
 
 def compute_cycle_life_at_threshold(
@@ -65,16 +61,23 @@ def compute_cycle_life_at_threshold(
 
 
 def main() -> None:
-    print('summary 로드 중...')
-    summary_df = load_raw_summary()
+    print('Batch 2 raw summary 로드 중...')
+    summary_df = load_batch2_raw()
 
     print('cycle_life_2 계산 중...')
-    result = compute_cycle_life_at_threshold(summary_df, threshold=0.88)
+    batch2_result = compute_cycle_life_at_threshold(summary_df, threshold=0.88)
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    result.to_csv(OUTPUT_PATH)
-    print(f'저장 완료: {OUTPUT_PATH}  shape={result.shape}')
-    print(result.to_string())
+    # features.csv 로드 후 Batch 2 셀의 cycle_life를 cycle_life_2로 교체
+    features = pd.read_csv(FEATURES_PATH)
+    features = features.set_index(['cell_uid', 'batch_name'])
+
+    batch2_result = batch2_result[~batch2_result['cycle_life_2'].isna()]
+    features.loc[features.index.isin(batch2_result.index), 'cycle_life'] = \
+        batch2_result['cycle_life_2']
+
+    features.reset_index().to_csv(FEATURES_PATH, index=False)
+    print(f'features.csv 업데이트 완료 (Batch 2 {len(batch2_result)}개 셀)')
+    print(features.loc[features.index.get_level_values('batch_name') == '2018-02-20', 'cycle_life'])
 
 
 if __name__ == '__main__':

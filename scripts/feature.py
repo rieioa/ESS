@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import kurtosis
 
 PREPROCESSED_DIR = Path(__file__).parent.parent / 'preprocessed_data'
 QDLIN_PATH       = PREPROCESSED_DIR / 'qdlin.csv'
@@ -88,11 +89,38 @@ def extract_features(summary_df: pd.DataFrame, qdlin_df: pd.DataFrame) -> pd.Dat
         'delta_q_min'    : delta.min(axis=1),
         'delta_q_var'    : delta_var,
         'log_delta_q_var': np.log(delta_var + 1e-10),
+        'delta_q_kurt'   : kurtosis(delta, axis=1, fisher=True),
     }, index=q.index)
 
     result = meta.join(qdlin_stats, how='inner')
     result.index.name = 'cell_uid'
     return result.reset_index().set_index(['cell_uid', 'batch_name'])
+
+
+def compute_cycle_life_at_threshold(
+    summary_df: pd.DataFrame,
+    threshold: float = 0.82,
+    col_name: str = 'cycle_life_2',
+) -> pd.DataFrame:
+    """
+    각 셀에서 초기 QDischarge(cycle 2~6 중앙값)의 threshold 이하로
+    처음 떨어지는 사이클 번호를 col_name으로 반환.
+    끝까지 안 떨어지면 NaN.
+    """
+    records = []
+    qd_col = 'QDischarge' if 'QDischarge' in summary_df.columns else 'QD'
+
+    for cell_uid, g in summary_df.groupby('cell_uid'):
+        g = g.sort_values('cycle')
+        initial_qd = g[g['cycle'].between(2, 6)][qd_col].median()
+        cutoff     = initial_qd * threshold
+
+        below = g[g[qd_col] < cutoff]
+        cycle_life_2 = int(below['cycle'].iloc[0]) if len(below) > 0 else np.nan
+
+        records.append({'cell_uid': cell_uid, col_name: cycle_life_2})
+
+    return pd.DataFrame(records).set_index('cell_uid')
 
 
 def main() -> None:
