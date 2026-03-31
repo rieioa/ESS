@@ -19,3 +19,9 @@ matplotlib>=3.6.0
 
 # (선택) 노트북 내 이미지 표시 — IPython.display
 ipython>=8.0.0
+
+joblib
+numpy
+pandas
+scikit-learn
+h5py
