@@ -2,8 +2,8 @@
 
 ## 초기 설정 (최초 1회)
 ```bash
-git clone https://github.com/rieioa/slack.git
-cd slack
+git clone https://github.com/rieioa/ESS
+cd repo
 git config --global push.autoSetupRemote true
 ```
 
