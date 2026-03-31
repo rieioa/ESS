@@ -1,201 +1,185 @@
-"""
-feature.py — 셀 단위 피처 추출 및 저장
-
-입력:
-  preprocessed_data/batch*_preprocessed_cycles_all.csv  (preprocess.py 출력)
-  preprocessed_data/qdlin.csv                            (load_qdlin.py 출력)
-
-출력:
-  preprocessed_data/features.csv
-    인덱스: cell_uid, batch_name
-    피처:
-      cycle_life, charging_policy,
-      c1, c2,                         (policy에서 파싱)
-      qdlin_010_min, qdlin_010_var,   (cycle 10 Qdlin 통계)
-      qdlin_100_min, qdlin_100_var,   (cycle 100 Qdlin 통계)
-      delta_q_min,   delta_q_var      (Qdlin_100 - Qdlin_010 통계)
-"""
-
 from __future__ import annotations
 
-import re
+from dataclasses import dataclass
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pandas as pd
 
-PREPROCESSED_DIR = Path(__file__).parent.parent / 'preprocessed_data'
-QDLIN_PATH       = PREPROCESSED_DIR / 'qdlin.csv'
-OUTPUT_PATH      = PREPROCESSED_DIR / 'features.csv'
-FEATURES_CSV     = OUTPUT_PATH
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data"
 
-QDLIN_10_COLS  = [f'qdlin_010_{k:03d}' for k in range(1000)]
-QDLIN_100_COLS = [f'qdlin_100_{k:03d}' for k in range(1000)]
+TRAIN_BATCH = "2017-05-12"
+TEST2_BATCH = "2018-02-20"
+TEST3_BATCH = "2018-04-12"
+FILTER_MAX_CYCLE_LIFE = 1100
 
+MAT_FILES = {
+    TRAIN_BATCH: DATA_DIR / "2017-05-12_batchdata_updated_struct_errorcorrect.mat",
+    TEST2_BATCH: DATA_DIR / "2018-02-20_batchdata_updated_struct_errorcorrect.mat",
+    TEST3_BATCH: DATA_DIR / "2018-04-12_batchdata_updated_struct_errorcorrect.mat",
+}
 
-def rowwise_kurtosis(values: np.ndarray) -> np.ndarray:
-    """
-    Fisher kurtosis computed row-wise without scipy dependency.
-    Returns 0.0 for zero-variance rows.
-    """
-    centered = values - values.mean(axis=1, keepdims=True)
-    var = np.mean(centered ** 2, axis=1)
-    fourth = np.mean(centered ** 4, axis=1)
-
-    out = np.zeros(values.shape[0], dtype=float)
-    valid = var > 0
-    out[valid] = fourth[valid] / np.square(var[valid]) - 3.0
-    return out
+FEATURE_COLUMNS = ["DeltaQ_var", "charge_time_avg", "temp_integral"]
+EPS = 1e-12
 
 
-def parse_policy(policy: str) -> tuple[float, float]:
-    """
-    '3.6C(80%)-3.6C' → (3.6, 3.6)
-    '4C(80%)-2C'     → (4.0, 2.0)
-    파싱 실패 시 (nan, nan)
-    """
-    nums = re.findall(r'(\d+(?:\.\d+)?)C', str(policy))
-    if len(nums) >= 2:
-        return float(nums[0]), float(nums[1])
-    if len(nums) == 1:
-        return float(nums[0]), np.nan
-    return np.nan, np.nan
+@dataclass
+class CellData:
+    cycle_life: float
+    cycles: list[dict[str, np.ndarray]]
+    summary: dict[str, np.ndarray]
 
 
-def load_summary(preprocessed_dir: Path) -> pd.DataFrame:
-    """preprocessed_data 아래 summary CSV 로드 (배치별 or 통합 파일 자동 감지)"""
-    # 배치별 파일 우선
-    files = sorted(preprocessed_dir.glob('batch*_preprocessed_cycles_*.csv'))
-    # 없으면 통합 파일
-    if not files:
-        files = sorted(preprocessed_dir.glob('preprocessed_cycles_*.csv'))
-    if not files:
-        raise FileNotFoundError(f'summary CSV 없음: {preprocessed_dir}')
-    return pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+def deref_scalar(f: h5py.File, ref) -> float:
+    arr = np.asarray(f[ref][()]).reshape(-1)
+    if arr.size == 0:
+        return float("nan")
+    return float(arr[0])
 
 
-def extract_features(summary_df: pd.DataFrame, qdlin_df: pd.DataFrame) -> pd.DataFrame:
-    # 셀 메타 (cell_uid당 1행)
-    meta = (
-        summary_df
-        .drop_duplicates('cell_uid')
-        .set_index('cell_uid')[['batch_name', 'cycle_life', 'charging_policy']]
-    )
-
-    # C1, C2 파싱
-    parsed = meta['charging_policy'].apply(parse_policy)
-    meta['c1'] = parsed.apply(lambda x: x[0])
-    meta['c2'] = parsed.apply(lambda x: x[1])
-
-    # Qdlin 통계
-    q = qdlin_df.set_index('cell_uid')
-
-    arr10  = q[QDLIN_10_COLS].values
-    arr100 = q[QDLIN_100_COLS].values
-    delta  = arr100 - arr10
-
-    delta_var = delta.var(axis=1)
-
-    qdlin_stats = pd.DataFrame({
-        'qdlin_010_min'  : arr10.min(axis=1),
-        'qdlin_010_var'  : arr10.var(axis=1),
-        'qdlin_100_min'  : arr100.min(axis=1),
-        'qdlin_100_var'  : arr100.var(axis=1),
-        'delta_q_min'    : delta.min(axis=1),
-        'delta_q_var'    : delta_var,
-        'log_delta_q_var': np.log(delta_var + 1e-10),
-        'delta_q_kurt'   : rowwise_kurtosis(delta),
-    }, index=q.index)
-
-    result = meta.join(qdlin_stats, how='inner')
-    result.index.name = 'cell_uid'
-    return result.reset_index().set_index(['cell_uid', 'batch_name'])
+def deref_vector(f: h5py.File, ref) -> np.ndarray:
+    return np.asarray(f[ref][()]).reshape(-1).astype(float, copy=False)
 
 
-def get_features(X: pd.DataFrame, selected_features: list[str] | None = None) -> list[str]:
-    """Return feature columns to use from X, validating optional selections."""
-    if selected_features is None:
-        return X.columns.tolist()
+def read_cycle_group(f: h5py.File, cycle_group_ref) -> list[dict[str, np.ndarray]]:
+    cycle_group = f[cycle_group_ref]
+    n_cycles = cycle_group["t"].shape[0]
+    cycles: list[dict[str, np.ndarray]] = []
+    for idx in range(n_cycles):
+        cycles.append(
+            {
+                "t": deref_vector(f, cycle_group["t"][idx, 0]),
+                "T": deref_vector(f, cycle_group["T"][idx, 0]),
+                "Qdlin": deref_vector(f, cycle_group["Qdlin"][idx, 0]),
+            }
+        )
+    return cycles
 
-    missing = [name for name in selected_features if name not in X.columns]
-    if missing:
-        raise ValueError(f'Requested features not found in X: {missing}')
 
-    return selected_features
-
-
-def load_feature_dataset(
-    features_csv: Path = FEATURES_CSV,
-    train_batch: str = '2017-05-12',
-    test_batch: str = '2018-02-20',
-    extra_batches: list[str] | None = None,
-    exclude_train_prefix: int = 5,
-) -> dict[str, pd.DataFrame]:
-    """
-    Load features.csv and return train/test/(optional) extra batch splits.
-
-    Batch 1 keeps the historical convention of excluding the first 5 censored cells.
-    """
-    df = pd.read_csv(features_csv)
-    if 'log_delta_q_var' not in df.columns and 'delta_q_var' in df.columns:
-        df['log_delta_q_var'] = np.log(df['delta_q_var'].clip(lower=1e-10))
-
-    train_df = df[df['batch_name'] == train_batch].copy()
-    if exclude_train_prefix > 0:
-        train_df = train_df.iloc[exclude_train_prefix:].reset_index(drop=True)
-
-    datasets = {
-        'train': train_df,
-        'test': df[df['batch_name'] == test_batch].copy(),
+def read_summary_group(f: h5py.File, summary_ref) -> dict[str, np.ndarray]:
+    summary = f[summary_ref]
+    return {
+        "QDischarge": np.asarray(summary["QDischarge"][()]).reshape(-1).astype(float, copy=False),
+        "IR": np.asarray(summary["IR"][()]).reshape(-1).astype(float, copy=False),
+        "chargetime": np.asarray(summary["chargetime"][()]).reshape(-1).astype(float, copy=False),
     }
 
-    for batch_name in extra_batches or []:
-        datasets[batch_name] = df[df['batch_name'] == batch_name].copy()
 
-    return datasets
-
-
-def compute_cycle_life_at_threshold(
-    summary_df: pd.DataFrame,
-    threshold: float = 0.82,
-    col_name: str = 'cycle_life_2',
-) -> pd.DataFrame:
-    """
-    각 셀에서 초기 QDischarge(cycle 2~6 중앙값)의 threshold 이하로
-    처음 떨어지는 사이클 번호를 col_name으로 반환.
-    끝까지 안 떨어지면 NaN.
-    """
-    records = []
-    qd_col = 'QDischarge' if 'QDischarge' in summary_df.columns else 'QD'
-
-    for cell_uid, g in summary_df.groupby('cell_uid'):
-        g = g.sort_values('cycle')
-        initial_qd = g[g['cycle'].between(2, 6)][qd_col].median()
-        cutoff     = initial_qd * threshold
-
-        below = g[g[qd_col] < cutoff]
-        cycle_life_2 = int(below['cycle'].iloc[0]) if len(below) > 0 else np.nan
-
-        records.append({'cell_uid': cell_uid, col_name: cycle_life_2})
-
-    return pd.DataFrame(records).set_index('cell_uid')
+def find_time_gap_cycle_indices(cycles: list[dict[str, np.ndarray]]) -> list[int]:
+    bad_indices: list[int] = []
+    for idx in range(1, len(cycles)):
+        t = cycles[idx]["t"]
+        if t.size < 2:
+            continue
+        dt = np.diff(t)
+        finite_dt = dt[np.isfinite(dt)]
+        if finite_dt.size == 0:
+            continue
+        mean_dt = float(np.mean(finite_dt))
+        if mean_dt <= 0:
+            continue
+        if float(np.max(finite_dt)) > 5.0 * mean_dt:
+            bad_indices.append(idx)
+    return bad_indices
 
 
-def main() -> None:
-    print('summary 로드 중...')
-    summary_df = load_summary(PREPROCESSED_DIR)
-
-    print('qdlin 로드 중...')
-    qdlin_df = pd.read_csv(QDLIN_PATH)
-
-    print('피처 추출 중...')
-    features = extract_features(summary_df, qdlin_df)
-
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    features.to_csv(OUTPUT_PATH)
-    print(f'저장 완료: {OUTPUT_PATH}  shape={features.shape}')
-    print(features.head().to_string())
+def remove_indices_1d(arr: np.ndarray, bad_indices: list[int]) -> np.ndarray:
+    if not bad_indices:
+        return arr
+    return np.delete(arr, bad_indices)
 
 
-if __name__ == '__main__':
-    main()
+def cleaned_cell_data(
+    f: h5py.File,
+    cycle_life_ref,
+    cycles_ref,
+    summary_ref,
+) -> CellData | None:
+    cycle_life = deref_scalar(f, cycle_life_ref)
+    if not np.isfinite(cycle_life) or cycle_life <= 0:
+        return None
+
+    cycles = read_cycle_group(f, cycles_ref)
+    summary = read_summary_group(f, summary_ref)
+
+    bad_indices = find_time_gap_cycle_indices(cycles)
+    if bad_indices:
+        cycles = [cycle for idx, cycle in enumerate(cycles) if idx not in bad_indices]
+        summary = {key: remove_indices_1d(value, bad_indices) for key, value in summary.items()}
+
+    if len(cycles) < 100:
+        return None
+    if any(len(summary[key]) < 100 for key in ("QDischarge", "IR", "chargetime")):
+        return None
+
+    return CellData(cycle_life=cycle_life, cycles=cycles, summary=summary)
+
+
+def compute_features(cell: CellData) -> dict[str, float] | None:
+    qdlin_10 = cell.cycles[9]["Qdlin"]
+    qdlin_100 = cell.cycles[99]["Qdlin"]
+    if qdlin_10.size == 0 or qdlin_100.size == 0 or qdlin_10.size != qdlin_100.size:
+        return None
+
+    delta_q = qdlin_100 - qdlin_10
+    delta_q_var = float(np.var(delta_q))
+
+    charge_2_6 = cell.summary["chargetime"][1:6]
+    if charge_2_6.size != 5:
+        return None
+
+    temp_integral = 0.0
+    for cyc in cell.cycles[1:100]:
+        t = cyc["t"]
+        T = cyc["T"]
+        if t.size < 2 or T.size < 2 or t.size != T.size:
+            return None
+        temp_integral += float(np.trapezoid(T, t))
+
+    return {
+        "DeltaQ_var": float(np.log10(abs(delta_q_var) + EPS)),
+        "charge_time_avg": float(np.mean(charge_2_6)),
+        "temp_integral": float(temp_integral),
+    }
+
+
+def extract_batch_features(batch_name: str, mat_path: Path) -> pd.DataFrame:
+    rows: list[dict[str, float | str]] = []
+    with h5py.File(mat_path, "r") as f:
+        batch = f["batch"]
+        cycle_life_ds = batch["cycle_life"]
+        cycles_ds = batch["cycles"]
+        summary_ds = batch["summary"]
+
+        for cell_index in range(cycle_life_ds.shape[0]):
+            cell = cleaned_cell_data(
+                f=f,
+                cycle_life_ref=cycle_life_ds[cell_index, 0],
+                cycles_ref=cycles_ds[cell_index, 0],
+                summary_ref=summary_ds[cell_index, 0],
+            )
+            if cell is None or cell.cycle_life >= FILTER_MAX_CYCLE_LIFE:
+                continue
+
+            features = compute_features(cell)
+            if features is None:
+                continue
+
+            row = {
+                "cell_uid": f"{batch_name}_cell_{cell_index:03d}",
+                "batch_name": batch_name,
+                "cycle_life": float(cell.cycle_life),
+            }
+            row.update(features)
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def build_datasets() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    train_df = extract_batch_features(TRAIN_BATCH, MAT_FILES[TRAIN_BATCH])
+    test2_df = extract_batch_features(TEST2_BATCH, MAT_FILES[TEST2_BATCH])
+    test3_df = extract_batch_features(TEST3_BATCH, MAT_FILES[TEST3_BATCH])
+    return train_df, test2_df, test3_df

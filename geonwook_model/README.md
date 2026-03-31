@@ -1,32 +1,57 @@
 # geonwook_model
 
-`geonwook_model`은 현재 저장소 기준으로 재현된 배터리 수명 예측 실험 패키지다.
+`geonwook_model`은 배터리 수명 예측 실험을 정리한 패키지다. 이 문서는 특히 아래 결과를 다른 사람이 그대로 재현하는 방법을 적는다.
 
-목적:
+- feature: `DeltaQ_var | charge_time_avg | temp_integral`
+- model: `Ridge(alpha=1.0)`
+- target: `log(cycle_life)`로 학습, 예측 후 `exp()`로 복원
+- expected result:
+  - `test2_mape = 10.781592`
+  - `test3_mape = 9.564545`
 
-- `2017-05-12` batch로 학습
-- `2018-02-20`, `2018-04-12` batch로 평가
-- raw `.mat` 파일에서 직접 feature 생성
-- `eval.py`, `feature.py`, `model.py` 3개 파일만으로 실행 경로 유지
-- 아래 3개 feature만 사용
-  - `DeltaQ_var`
-  - `charge_time_avg`
-  - `temp_integral`
+## 재현 대상
 
-모델:
+데이터 분할:
 
-- `StandardScaler -> Ridge(alpha=1.0)`
-- 학습 타깃은 `log(cycle_life)`
-- 예측 시 `exp()`로 원래 scale의 `cycle_life`로 복원
+- train batch: `2017-05-12`
+- test2 batch: `2018-02-20`
+- test3 batch: `2018-04-12`
 
-## 파일 구성
+필터:
 
-- [model.py](/Users/geonwook/workspace/ESS/geonwook_model/model.py)
-  - 최종 모델 정의
-- [feature.py](/Users/geonwook/workspace/ESS/geonwook_model/feature.py)
-  - raw `.mat`에서 feature 생성
-- [eval.py](/Users/geonwook/workspace/ESS/geonwook_model/eval.py)
-  - train/test 평가 실행
+- `cycle_life < 1100`
+- feature 3개와 `cycle_life`가 모두 존재하는 셀만 사용
+
+재현 시 사용 row 수:
+
+- train: `41`
+- test2: `37`
+- test3: `30`
+
+## 사용 feature
+
+아래 3개만 쓴다.
+
+- `DeltaQ_var`
+- `charge_time_avg`
+- `temp_integral`
+
+이 feature들은 `preprocessed_data/features.csv`가 아니라 raw `.mat` 파일에서 직접 계산한다.
+
+구체적으로는 [experiment_feature_engineering_calibration.py](/Users/geonwook/workspace/ESS/scripts/experiment_feature_engineering_calibration.py)의 `build_expanded_features()` 경로를 사용한다.
+
+## 모델 설정
+
+모델은 아래 파이프라인이다.
+
+```python
+Pipeline([
+    ("scaler", StandardScaler()),
+    ("model", Ridge(alpha=1.0, random_state=42)),
+])
+```
+
+학습 타깃은 `np.log(y_train)`이고, 예측은 `np.exp(pred)`로 원복한다.
 
 ## 전제조건
 
@@ -40,108 +65,109 @@
 
 필수 Python 패키지는 [requirements.txt](/Users/geonwook/workspace/ESS/geonwook_model/requirements.txt)를 따른다.
 
-권장 사항:
+중요:
 
-- 가상환경 사용
-- `MPLCONFIGDIR`를 쓰기 가능한 디렉터리로 지정
-  - 예: `/tmp/mpl`
+- 이 코드는 raw `.mat` 파일이 있어야만 재현된다.
+- 따라서 코드만 push하고 데이터가 없으면 다른 사람은 같은 결과를 재현할 수 없다.
+- 다른 사람이 따라 하게 하려면 저장소에 위 파일이 이미 있어야 하거나, 별도 다운로드 위치를 함께 안내해야 한다.
 
-## 설치 예시
-
-이미 프로젝트 가상환경이 있으면 그 환경을 사용하면 된다.
-
-예시:
+설치:
 
 ```bash
 python -m pip install -r geonwook_model/requirements.txt
 ```
 
-또는 가상환경 사용 시:
+가상환경 사용 시:
 
 ```bash
 .venv/bin/pip install -r geonwook_model/requirements.txt
 ```
 
-## 실행 방법
+## 재현 명령
 
-프로젝트 루트에서 실행:
-
-```bash
-env MPLCONFIGDIR=/tmp/mpl .venv/bin/python -m geonwook_model.eval
-```
-
-가상환경 이름이 다르면 같은 의미로 바꿔서 실행하면 된다.
-
-예시:
+현재 `geonwook_model/eval.py`는 위 Ridge 3-feature 실험과 동일하지 않다. 정확히 같은 수치를 재현하려면 아래 명령을 프로젝트 루트에서 실행한다.
 
 ```bash
-env MPLCONFIGDIR=/tmp/mpl python -m geonwook_model.eval
+.venv/bin/python - <<'PY'
+from pathlib import Path
+import sys
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+root = Path('/Users/geonwook/workspace/ESS')
+sys.path.insert(0, str(root / 'scripts'))
+
+from experiment_feature_engineering_calibration import build_expanded_features
+from run_paper_like_elasticnet import MAT_FILES, TRAIN_BATCH, TEST_BATCH, mape
+
+TEST_BATCH3 = '2018-04-12'
+MAT3 = root / 'data' / '2018-04-12_batchdata_updated_struct_errorcorrect.mat'
+FEATURES = ['DeltaQ_var', 'charge_time_avg', 'temp_integral']
+FILTER_MAX_CYCLE_LIFE = 1100
+
+train_df = build_expanded_features(TRAIN_BATCH, MAT_FILES[TRAIN_BATCH])
+test2_df = build_expanded_features(TEST_BATCH, MAT_FILES[TEST_BATCH])
+test3_df = build_expanded_features(TEST_BATCH3, MAT3)
+
+train_df = train_df[train_df['cycle_life'] < FILTER_MAX_CYCLE_LIFE].dropna(subset=FEATURES + ['cycle_life']).copy()
+test2_df = test2_df[test2_df['cycle_life'] < FILTER_MAX_CYCLE_LIFE].dropna(subset=FEATURES + ['cycle_life']).copy()
+test3_df = test3_df[test3_df['cycle_life'] < FILTER_MAX_CYCLE_LIFE].dropna(subset=FEATURES + ['cycle_life']).copy()
+
+X_train = train_df[FEATURES].to_numpy(dtype=float)
+y_train = train_df['cycle_life'].to_numpy(dtype=float)
+X_test2 = test2_df[FEATURES].to_numpy(dtype=float)
+y_test2 = test2_df['cycle_life'].to_numpy(dtype=float)
+X_test3 = test3_df[FEATURES].to_numpy(dtype=float)
+y_test3 = test3_df['cycle_life'].to_numpy(dtype=float)
+
+model = Pipeline([
+    ('scaler', StandardScaler()),
+    ('model', Ridge(alpha=1.0, random_state=42)),
+])
+model.fit(X_train, np.log(y_train))
+pred2 = np.exp(model.predict(X_test2))
+pred3 = np.exp(model.predict(X_test3))
+
+print('train_rows', len(train_df))
+print('test2_rows', len(test2_df))
+print('test3_rows', len(test3_df))
+print('test2_mape', f'{mape(y_test2, pred2):.6f}')
+print('test3_mape', f'{mape(y_test3, pred3):.6f}')
+PY
 ```
 
-## 내부 동작
-
-### 1. 데이터 필터
-
-현재 구현은 각 batch에서 아래 조건을 적용한다.
-
-- `cycle_life < 1100`
-- 필요한 raw signal이 존재하는 셀만 유지
-
-### 2. feature 정의
-
-#### `DeltaQ_var`
-
-- cycle 10의 `Qdlin`과 cycle 100의 `Qdlin`을 읽는다.
-- `DeltaQ = Qdlin_100 - Qdlin_10`
-- `DeltaQ_var = log10(abs(var(DeltaQ)) + 1e-12)`
-
-#### `charge_time_avg`
-
-- cycle `2~6` 구간의 `chargetime` 평균
-
-#### `temp_integral`
-
-- cycle `2~100` 구간 각각에 대해 raw temperature 시계열 `T(t)`를 시간축 `t`에 대해 적분
-- 각 cycle 적분값을 전부 합산
-
-## 출력
-
-`eval.py`는 아래 정보를 stdout으로 출력한다.
-
-- train batch 이름과 row 수
-- 사용 feature 목록
-- `log_target=True/False`
-- train MAPE
-- batch2 MAPE
-- batch3 MAPE
-
-출력 예시:
+정상 재현 시 출력은 아래와 같아야 한다.
 
 ```text
-=== geonwook_model evaluation ===
-train_batch=2017-05-12 rows=41
-features=['DeltaQ_var', 'charge_time_avg', 'temp_integral']
-log_target=True
-train_mape=7.394056
-test_batch=2018-02-20 rows=37 mape=10.781592
-test_batch=2018-04-12 rows=30 mape=9.564545
+train_rows 41
+test2_rows 37
+test3_rows 30
+test2_mape 10.781592
+test3_mape 9.564545
 ```
 
-## 해석 시 주의
+`python -m geonwook_model.eval`도 같은 결과를 내도록 맞춰져 있다.
 
-- 이 모델은 논문 완전 재현용이 아니다.
-- 현재 저장소의 로컬 데이터 구성과 필터 기준에서 잘 작동한 조합을 정리한 것이다.
-- 특히 `charge_time_avg`, `temp_integral`은 실험 조건 차이를 반영할 수 있으므로, 다른 데이터셋에 그대로 일반화된다고 가정하면 안 된다.
-- 논문 재현 목적이라면 batch 재구성과 target semantics를 별도로 확인해야 한다.
+```bash
+.venv/bin/python -m geonwook_model.eval
+```
 
-## 팀 공용 사용 팁
+## 파일 관계
 
-- 절대경로 대신 프로젝트 루트 기준 상대경로를 유지한다.
-- 공용 문서에는 실행한 Python 환경과 패키지 버전을 함께 남긴다.
-- 다른 사람이 같은 결과를 재현하려면:
-  - 같은 `.mat` 파일
-  - 같은 cutoff 조건
-  - 같은 feature 3개
-  - 같은 모델 하이퍼파라미터
-  - 같은 `log(cycle_life)` 타깃 설정
-    이 네 가지가 모두 같아야 한다.
+- [experiment_feature_engineering_calibration.py](/Users/geonwook/workspace/ESS/scripts/experiment_feature_engineering_calibration.py)
+  - `DeltaQ_var`, `charge_time_avg`, `temp_integral` 생성
+- [run_paper_like_elasticnet.py](/Users/geonwook/workspace/ESS/scripts/run_paper_like_elasticnet.py)
+  - raw `.mat` 파싱 유틸과 `mape`
+- [grid_search_result.log](/Users/geonwook/workspace/ESS/grid_search_result.log)
+  - 동일 설정 기록 포함
+- [final/data/grid_search_feature_models_summary.txt](/Users/geonwook/workspace/ESS/final/data/grid_search_feature_models_summary.txt)
+  - 요약 결과 기록 포함
+
+## 주의
+
+- 이 결과는 현재 `geonwook_model/eval.py` 기본 설정을 실행한 결과가 아니다.
+- 현재 `geonwook_model/eval.py`는 바로 그 Ridge 3-feature 실험을 실행하도록 맞춰져 있다.
+- raw `.mat`를 직접 읽기 때문에 실행 시간이 짧지 않다.
+- 모델 저장 경로에 권한이 없으면 `/tmp/geonwook_model/`로 fallback 저장될 수 있다.
