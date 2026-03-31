@@ -18,6 +18,7 @@ import os
 import sys
 import numpy as np
 import pandas as pd
+import sklearn
 
 # Allow running as: python scripts/test.py from the repo root
 sys.path.insert(0, os.path.dirname(__file__))
