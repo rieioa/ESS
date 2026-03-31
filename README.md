@@ -1,7 +1,7 @@
 재활용 레포
 
 
-git clone https://github.com/rieioa/slack.git
+git clone https://github.com/rieioa/ESS
 git pull origin main --allow-unrelated-histories
 
 작업 시 
