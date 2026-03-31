@@ -1,9 +1,48 @@
+# ESS 배터리 수명 예측 
+초기 사이클(1~100회) 데이터만을 활용하여 리튬이온 배터리의 전체 수명(Cycle Life)을 조기에 예측하는 회귀 모델을 개발한다.
+EDA를 통해 열화 패턴과 충전 조건이 수명에 미치는 영향을 분석하고, 이를 바탕으로 유의미한 피처를 선별하여 ESS 배터리 관리 및 교체 의사결정에 활용 가능한 예측 모델을 구축한다.
+
+## 프로젝트 개요
+- 데이터셋 : MIT-Stanford Battery Dataset (Severson et al., Nature Energy 2019)
+- 학습 데이터 : Batch 1 (2017-05-12)
+- 평가 데이터 : Batch 2 (2018-02-20)
+- 태스크 : Regression (Cycle Life 예측)
+
+## 파일 구조
+```
+├── data/
+│   ├── 2017-05-12_batchdata_updated_struct_errorcorrect.mat   # Batch1
+│   ├── 2018-02-20_batchdata_updated_struct_errorcorrect.mat   # Batch2
+│   └── 2018-04-12_batchdata_updated_struct_errorcorrect.mat   # Batch3
+├── EDA/
+│   ├── ESS_EDA.ipynb          # 메인 EDA (Q1~Q5 전체)
+│   ├── Batch2.ipynb
+│   ├── Batch3.ipynb
+│   └── eda_Q5.ipynb
+├── preprocessed_data/
+│   ├── batch1_preprocessed_cycles_001_100.csv
+│   ├── batch2_preprocessed_cycles_001_100.csv
+│   └── batch3_preprocessed_cycles_001_100.csv
+├── scripts/
+│   ├── preprocess.py
+│   ├── load_qdlin.py
+│   ├── feature.py
+│   ├── model.py
+│   ├── train.py
+│   ├── predict.py
+│   └── test.py
+├── figures/
+│   └── eda_day1/              # EDA 결과 시각화 이미지
+├── requirements.txt
+└── README.md
+```
+
 # Git 협업 가이드
 
 ## 초기 설정 (최초 1회)
 ```bash
 git clone https://github.com/rieioa/ESS
-cd repo
+cd ESS
 git config --global push.autoSetupRemote true
 ```
 
@@ -36,37 +75,70 @@ git checkout -b new_branch_name
 ```
 
 ## EDA
-- Cycle Life 분포
-	- 분포 형태 및 장단수명 비율 요약
-    Batch 1 : 
-        - 평균인 845 cycle 부근에 많은 셀이 분포해있고, 그 외 영역에서는 상당히 고르게 분포
-        - 500cycle 미만의 수명을 가지는 단수명 셀은 0개, 1000cycle 이상의 수명을 가지는 셀은 21.7%(10개)
-    Batch 2 :
-        - 평균인 566 cycle보다 낮은 구간에 30개 셀이 균일하게, 나머지 9개 셀은 비교적 긴 수명 영역에 듬성듬성 분포
-        - 500cycle 미만의 수명을 가지는 단수명 셀은 71.8%(28개), 1000cycle 이상의 수명을 가지는 장수명 셀은 7.7%(3개)
-    Batch 3 :
-        - 평균인 1060 cycle 이하로 많은 셀이 분포해있고, 그 외 영역에서는 드물게 분포
-        - 500cycle 미만의 수명을 가지는 단수명 셀은 0개, 1000cycle 이상의 수명을 가지는 셀은 52.3%(23개)
-	- 핵심 발견 : 이상치 셀은 QD curve와 비교해보았을 때, Batch 3에서 3개의 배터리 셀은 초기부터 급격한 방전 용량의 감소를 보여 평균보다 낮은 cycle_life를 가지는 것을 확인. 
+- **Cycle Life 분포**
+  - Batch1: 평균 845 cycle, 장수명(≥1000) 21.7%, 단수명(<500) 0개
+  - Batch2: 평균 566 cycle, 장수명 7.7%, 단수명 71.8% (고의로 단수명 셀 위주 구성, 실험 환경 상이)
+  - Batch3: 평균 1060 cycle, 장수명(≥1000) 52.3%, 단수명(<500) 0개
+  - 핵심 발견 : Batch별 EOL cutoff 기준이 다르므로(Batch1·3: 0.88Ah/82%SOH, Batch2: 0.825Ah/75%SOH) 배치 간 cycle_life 직접 비교는 불가
 
-- 열화 곡선 분석
-	- 장수명 vs 단수명 셀의 열화 속도 차이
+- **열화 곡선 분석**
+  - 장수명 셀은 완만한 선형 감소, 단수명 셀은 초반부터 급격한 용량 감소
+  - Knee point 존재 확인 — QD가 일정 구간까지 선형 감소 후 특정 시점에 가속하여 급격히 하락하는 패턴이 세 배치 공통으로 관찰됨
+  - 핵심 발견 : 초기 사이클에서의 열화 속도 차이가 최종 수명을 결정하는 핵심 신호이며, Batch3에서 이상치 셀 3개는 초기부터 급격한 QD 감소를 보임
 
-	- Knee point 존재 여부 및 발생 시점
-	- 핵심 발견 :
+- **ΔQ(V) 곡선 분석**
+  - 2.3~2.4V 구간에서 최대 감소, 단수명 셀일수록 2.4~2.6V 구간 감소 폭이 큼(-0.04~-0.06 수준)
+  - 핵심 발견 : 초기 10~100 사이클의 ΔQ(V) 패턴만으로 수명 예측 가능. dQ_min(r=+0.827)과 log_dQ_var(r=-0.851)가 cycle life와 가장 강한 상관관계를 보이는 핵심 피처
 
-- ΔQ(V) 곡선 분석
-	- Cycle 100 - Cycle 10 차이 곡선 형태
-    약 2.3~2.4V 구간에서 가장 큰 변화가 발생하며 cycle life에 따라 곡선의 깊이가 점진적으로 달라지는 경향이 나타남.
-	- 장단수명 셀 간 ΔQ 형태 비교
-    세 배치 모두 약 2.4~2.6V 구간에서 ΔQ(V)의 최저값이 -0.01~-0.03 범위에 위치하며, 전반적으로 완만한 곡선 형태를 보임. 단수명 배터리는 동일 전압 구간에서 ΔQ(V)가 -0.04~-0.06 수준까지 크게 감소하며, 더 깊고 급격한 열화 패턴을 나타냄.
-	- 핵심 발견 :
-    특정 전압 구간(2.4~2.6V)에서의 ΔQ(V) 감소 정도는 cycle life와 강한 상관관계를 보임.
+- **충전 속도(C-rate)와 수명의 관계**
+  - 낮은 C-rate 정책일수록 수명이 긴 경향이 세 배치 공통으로 나타남 (4C→8C 구간에서 약 40% 수명 단축)
+  - 핵심 발견 : C-rate 절댓값보다 SOC가 높아지는 구간에서의 충전 속도가 수명에 더 큰 영향을 미치며, mean_chargetime이 배치를 막론하고 수명과 가장 안정적인 상관관계(r≈+0.58~0.64)를 보임
 
-- 충전 속도(C-rate)와 수명의 관계
-	- 충전 프로토콜별 평균 수명 비교 결과
-    세 배치 전체에서 C-rate가 낮은 정책이 높은 수명을 기록하는 경향이 공통적으로 나타남.
-	- 핵심 발견 :
-    C-rate와 cycle life 간의 관계는 선형적이지 않으며, 특정 임계값 이상의 C-rate는 수명을 급격히 단축시키는 것으로 보임.
+## Modeling 
 
-- (추가 확인한 내용 작성) 
+### 피처 엔지니어링 전략
+EDA 결과를 바탕으로 선택한 피처와 그 근거를 기술
+
+
+### 모델 선택 및 근거
+- 후보 모델 : ElasticNet, XGBoost
+- 최종 모델 : ElasticNet
+- 선택 이유 : 
+
+
+## 성능 결과
+
+<!-- | 구분 | | MAPE (%) | 비고 |
+|---|---|---|---|
+| Train (Batch 1 CV) | | | 비고 |
+| Valid (Batch 1 Hold-out) | | | 비고 |
+| Test (Batch 2) | | | 비고 |
+| | Gap (Train-Valid) | | (+) : 과적합 의심 |
+| | Gap (Valid-Test) | | (+) : 배치간 일반화 저하 의심 |
+| | Gap (Target-Test) | | Target : 원논문 9.1% |
+| Test (Batch 3) | | | 비고 |
+| | Gap (Batch2-Batch3) | | Test 성능 간 비교 |
+| | Gap (Target-Test) | | Batch 3 기준, 원논문 성능 비교 | -->
+
+
+## 오류 분석
+- 모델이 가장 크게 틀린 셀의 공통점
+- 원인 가설 및 개선 방향
+
+
+## ESS 도메인 해석
+분석 결과를 실제 ESS 운영 관점에서 해석
+
+- 이 모델을 실제 BESS에 적용한다면 어떤 의사결정에 활용 가능한가?
+- 어떤 한계가 있으며, 실 배포를 위해 추가로 필요한 것은 무엇인가?
+
+
+## 참고문헌
+- Severson et al. (2019). Data-driven prediction of battery cycle life before capacity degradation. *Nature Energy*, 4, 383–391.
+
+
+## 팀 구성
+- 손수민 : EDA
+- 유건욱 : EDA
+- 조성현 : EDA
+- 최종민 : EDA
