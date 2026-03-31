@@ -7,6 +7,7 @@
 - `2017-05-12` batch로 학습
 - `2018-02-20`, `2018-04-12` batch로 평가
 - raw `.mat` 파일에서 직접 feature 생성
+- `eval.py`, `feature.py`, `model.py` 3개 파일만으로 실행 경로 유지
 - 아래 3개 feature만 사용
   - `DeltaQ_var`
   - `charge_time_avg`
@@ -37,13 +38,7 @@
 - `data/2018-02-20_batchdata_updated_struct_errorcorrect.mat`
 - `data/2018-04-12_batchdata_updated_struct_errorcorrect.mat`
 
-필수 Python 패키지:
-
-- `numpy`
-- `pandas`
-- `scikit-learn`
-- `h5py`
-- `matplotlib`
+필수 Python 패키지는 [requirements.txt](/Users/geonwook/workspace/ESS/geonwook_model/requirements.txt)를 따른다.
 
 권장 사항:
 
@@ -58,13 +53,13 @@
 예시:
 
 ```bash
-python -m pip install numpy pandas scikit-learn h5py matplotlib
+python -m pip install -r geonwook_model/requirements.txt
 ```
 
 또는 가상환경 사용 시:
 
 ```bash
-.venv/bin/pip install numpy pandas scikit-learn h5py matplotlib
+.venv/bin/pip install -r geonwook_model/requirements.txt
 ```
 
 ## 실행 방법
