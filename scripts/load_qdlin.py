@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 
-ARCHIVE_DIR = Path(__file__).parent.parent / 'archive'
+ARCHIVE_DIR = Path(__file__).parent.parent / 'data'
 OUTPUT_PATH = Path(__file__).parent.parent / 'preprocessed_data' / 'qdlin.csv'
 
 BATCH_ALIAS = {  # preprocess.py의 BATCH_ALIAS_MAP과 동일

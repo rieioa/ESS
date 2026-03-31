@@ -78,13 +78,16 @@ def extract_features(summary_df: pd.DataFrame, qdlin_df: pd.DataFrame) -> pd.Dat
     arr100 = q[QDLIN_100_COLS].values
     delta  = arr100 - arr10
 
+    delta_var = delta.var(axis=1)
+
     qdlin_stats = pd.DataFrame({
-        'qdlin_010_min': arr10.min(axis=1),
-        'qdlin_010_var': arr10.var(axis=1),
-        'qdlin_100_min': arr100.min(axis=1),
-        'qdlin_100_var': arr100.var(axis=1),
-        'delta_q_min'  : delta.min(axis=1),
-        'delta_q_var'  : delta.var(axis=1),
+        'qdlin_010_min'  : arr10.min(axis=1),
+        'qdlin_010_var'  : arr10.var(axis=1),
+        'qdlin_100_min'  : arr100.min(axis=1),
+        'qdlin_100_var'  : arr100.var(axis=1),
+        'delta_q_min'    : delta.min(axis=1),
+        'delta_q_var'    : delta_var,
+        'log_delta_q_var': np.log(delta_var + 1e-10),
     }, index=q.index)
 
     result = meta.join(qdlin_stats, how='inner')
