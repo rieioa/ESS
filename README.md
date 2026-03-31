@@ -1,78 +1,33 @@
 # ESS 배터리 수명 예측 
-초기 사이클(1~100회) 데이터만을 활용하여 리튬이온 배터리의 전체 수명(Cycle Life)을 조기에 예측하는 회귀 모델을 개발한다.
-EDA를 통해 열화 패턴과 충전 조건이 수명에 미치는 영향을 분석하고, 이를 바탕으로 유의미한 피처를 선별하여 ESS 배터리 관리 및 교체 의사결정에 활용 가능한 예측 모델을 구축한다.
+ESS 배터리의 충방전 및 온도 데이터를 기반으로 배터리 열화 패턴을 분석하고, 잔존 수명(SOH)을 정확하게 예측하는 모델을 구축하는 것을 목표로 한다. 
+이를 통해 배터리 교체 시점을 사전에 판단하고 운영 효율을 높여, ESS 시스템의 안정성과 경제성을 동시에 향상시키고자 한다.
+
 
 ## 프로젝트 개요
 - 데이터셋 : MIT-Stanford Battery Dataset (Severson et al., Nature Energy 2019)
 - 학습 데이터 : Batch 1 (2017-05-12)
-- 평가 데이터 : Batch 2 (2018-02-20)
-- 태스크 : Regression (Cycle Life 예측)
+- 평가 데이터 : Batch 2 (2018-02-20) / Batch(2018-04-12)
+- 태스크 : Regression (Cycle Life 예측)  
 
 ## 파일 구조
-```
-├── data/
-│   ├── 2017-05-12_batchdata_updated_struct_errorcorrect.mat   # Batch1
-│   ├── 2018-02-20_batchdata_updated_struct_errorcorrect.mat   # Batch2
-│   └── 2018-04-12_batchdata_updated_struct_errorcorrect.mat   # Batch3
-├── EDA/
-│   ├── ESS_EDA.ipynb          # 메인 EDA (Q1~Q5 전체)
-│   ├── Batch2.ipynb
-│   ├── Batch3.ipynb
-│   └── eda_Q5.ipynb
-├── preprocessed_data/
-│   ├── batch1_preprocessed_cycles_001_100.csv
-│   ├── batch2_preprocessed_cycles_001_100.csv
-│   └── batch3_preprocessed_cycles_001_100.csv
-├── scripts/
-│   ├── preprocess.py
-│   ├── load_qdlin.py
+..
+├── archive/
+├── data/ - 사용자가 직접 추가 필요
+├── EDA/ 
+│   └── ESS_EDA.ipynb
+├── model/
+│   ├── __pycache__/
+│   ├── __init__.py
+│   ├── eval.py
 │   ├── feature.py
-│   ├── model.py
-│   ├── train.py
-│   ├── predict.py
-│   └── test.py
-├── figures/
-│   └── eda_day1/              # EDA 결과 시각화 이미지
-├── requirements.txt
-└── README.md
-```
+│   └── model.py
+├── .gitignore
+├── how_to.md
+├── README.md
+└── requirements.txt
 
-# Git 협업 가이드
-
-## 초기 설정 (최초 1회)
-```bash
-git clone https://github.com/rieioa/ESS
-cd ESS
-git config --global push.autoSetupRemote true
-```
-
-> 히스토리 충돌 시: `git pull origin main --allow-unrelated-histories`
-
-## 작업 흐름
-```bash
-# 1. main 최신화
-git checkout main
-git pull origin main
-
-# 2. 브랜치 생성
-git checkout -b branch_name
-
-# 3. 작업 & 커밋
-git add .
-git commit -m "message"
-
-# 4. push
-git push
-
-# 5. GitHub에서 PR 생성 → 리뷰 → Merge
-```
-
-## 다음 작업 시
-```bash
-git checkout main
-git pull origin main
-git checkout -b new_branch_name
-```
+## 환경 설정
+[환경 설정](https://github.com/rieioa/ESS/blob/main/how_to.md)
 
 ## EDA
 - **Cycle Life 분포**
@@ -97,48 +52,90 @@ git checkout -b new_branch_name
 ## Modeling 
 
 ### 피처 엔지니어링 전략
-EDA 결과를 바탕으로 선택한 피처와 그 근거를 기술
+
+피처 구성 (7개)
+
+- DeltaQ_var : cycle 10~100 방전 전압 곡선 차이의 분산. 열화 패턴의 전체 변동성 포착 (r=-0.851)
+- DeltaQ_min : 동일 곡선의 최소값. 가장 심한 열화 지점의 강도 측정 (r=+0.827)
+- Qd_cycle2 : cycle 2 방전 용량. 셀 초기 상태 반영
+- IR_cycle2 : cycle 2 내부 저항. 초기 계면 상태 반영
+- charge_time_avg : cycle 2~6 평균 충전 시간. 충전 부하 강도 (r≈+0.58~0.64)
+- slope_Qd_2_100 : cycle 2~100 방전 용량 선형 기울기. 초기 열화 속도
+- temp_integral : cycle 2~100 온도 적분 합. 누적 열 스트레스
+
+C1, C2 대신 charge_time, temp_integral, slope를 선택한 이유
+Linear Regression을 적용하는데, 배터리 충·방전은 exponential 곡선을 그리므로 C-rate 인덱스(C1, C2)는 cycle life와 선형적 연관성이 낮습니다. 대신 배터리에 작용하는 직접적인 부하를 표현하는 수치를 선택했습니다.
+
+charge_time_avg → 충전 정책 강도를 실제 소요 시간으로 환산
+temp_integral → 높은 C-rate가 유발하는 발열을 누적량으로 정량화
+slope_Qd_2_100 → 충전 조건 차이가 초기 열화 속도에 미치는 영향을 포착
 
 
 ### 모델 선택 및 근거
-- 후보 모델 : ElasticNet, XGBoost
-- 최종 모델 : ElasticNet
-- 선택 이유 : 
+- 후보 모델 : ElasticNet, XGBoost, Ridge
+- 최종 모델 : Ridge Regression(`alpha=1.0`, `log_target=True`)
+- 선택 이유 : Cycle Life의 분포 특성을 고려해 모델의 일반화 성능을 높여 배치간 편차에 강건하게 대응
 
 
 ## 성능 결과
 
-<!-- | 구분 | | MAPE (%) | 비고 |
-|---|---|---|---|
-| Train (Batch 1 CV) | | | 비고 |
-| Valid (Batch 1 Hold-out) | | | 비고 |
-| Test (Batch 2) | | | 비고 |
-| | Gap (Train-Valid) | | (+) : 과적합 의심 |
-| | Gap (Valid-Test) | | (+) : 배치간 일반화 저하 의심 |
-| | Gap (Target-Test) | | Target : 원논문 9.1% |
-| Test (Batch 3) | | | 비고 |
-| | Gap (Batch2-Batch3) | | Test 성능 간 비교 |
-| | Gap (Target-Test) | | Batch 3 기준, 원논문 성능 비교 | -->
+  train_rows=41  test2_rows=37  test3_rows=30
+  features=['DeltaQ_var', 'charge_time_avg', 'temp_integral']
 
+==============================================================
+  Model: Ridge(alpha=1.0, log_target=True)
+==============================================================
+구분                          |  MAPE (%) | 비고
+----------------------------|-----------|----------------------------
+Train (Batch 1 CV)          |      8.23 |
+Valid (Batch 1 Hold-out)    |      7.20 |
+Test (Batch 2)              |     10.78 |
+----------------------------|-----------|----------------------------
+  Gap (Train-Valid)         |      1.03 | 
+  Gap (Valid-Test)          |     -3.58 | (+) 배치간 일반화 저하 의심
+  Gap (Target-Test)         |      1.68 | Target = 9.1%
+----------------------------|-----------|----------------------------
+Test (Batch 3)              |      9.56 |
+----------------------------|-----------|----------------------------
+  Gap (Batch2-Batch3)       |      1.22 | Test 성능 간 비교
+  Gap (Target-Test)         |      0.46 | Target = 9.1%
+==============================================================
 
 ## 오류 분석
 - 모델이 가장 크게 틀린 셀의 공통점
+1. 배치1에 존재하지 않았던 극단적인 충전 정책(예: 3.7C에서 5.9C로 역전되는 충전 패턴)인 경우 큰 오차를 기록.
+2. 단수명 셀의 경우 특정 임계점 이후 Knee curve가 조기 발생하지만 모델이 이를 포착 못하고 수명을 과대 예측함.
 - 원인 가설 및 개선 방향
+가설 : 1~100회라는 초기 사이클 범위 안에서 열화 징ㅎ수치적으로 명확히 발현되지 않아
+, 초반의 미세한 곡선 변화율만으로 후반부의 비선형적 붕괴 시점의 정확한 추론하기에 한계가 있음.
 
+개선 방안 : 예측에 사용하는 사이클 범위가 유연하게 확장되거나 특정 임계점 도달을 감지하여 추가 가중치를 부여. 또한 비선형성을 반영하는 시계열/딥러닝 앙상블 모델 확장 고려.
 
 ## ESS 도메인 해석
 분석 결과를 실제 ESS 운영 관점에서 해석
 
 - 이 모델을 실제 BESS에 적용한다면 어떤 의사결정에 활용 가능한가?
-- 어떤 한계가 있으며, 실 배포를 위해 추가로 필요한 것은 무엇인가?
+약 9~10% 수준의 MAPE 성능을 바탕으로 정밀 제어는 어렵지만, 배터리의 대략적인 수명 추세를 파악하여 교체 시점 및 예방 정비 시기를 판단하는 데 활용할 수 있다. 
+특히 Batch3에서 목표 성능(9.1%)에 근접한 결과를 보여, 특정 운영 환경에서는 신뢰 가능한 의사결정 지원이 가능하다.
 
+- 어떤 한계가 있으며, 실 배포를 위해 추가로 필요한 것은 무엇인가?
+Batch 간 성능 편차(최대 약 3.6%)가 존재하여 데이터 분포가 달라질 경우 예측 신뢰도가 저하될 수 있다. 따라서 실제 배포를 위해서는 target 정규화와 데이터 확장, 그리고 다양한 환경에 대한 일반화 성능 확보가 필요하다.
+
+
+##모델 성능 해석 : 아래 내용에 대하여 블릿 구분해서 간략히 파악한 내용 기술해 주세요
+- Gap 성능(3개)에 대해 해석
+Train–Valid gap(1.03)은 과적합 없이 안정적인 학습이 이루어졌음을 의미한다. 반면 Valid–Test gap(3.58)은 배치 간 분포 차이 및 cutoff 불일치로 인한 일반화 성능 저하를 보여준다.
+- 전체 성능 결과가 도메인 관점에서 의미있다고 보는지 의견 정리
+약 9~10% 수준의 오차는 ESS 운영에서 배터리 수명 추세를 파악하고 예방 정비 시점을 결정하는 데 실용적인 수준으로 평가된다. 특히 일부 배치에서 목표 성능에 근접한 결과는 특정 환경에서는 충분히 활용 가능한 모델임을 보여준다.
+- 만약 성능이 전반적으로 아쉬웠다면 그에 대한 한계점
+배치 간 성능 편차와 target 정의 불일치로 인해 실제 다양한 운영 환경에서의 신뢰성이 제한될 수 있다. 또한 데이터 규모와 feature 다양성이 부족하여 복잡한 열화 메커니즘을 충분히 반영하지 못한 점이 한계로 작용한다.
 
 ## 참고문헌
 - Severson et al. (2019). Data-driven prediction of battery cycle life before capacity degradation. *Nature Energy*, 4, 383–391.
 
 
 ## 팀 구성
-- 손수민 : EDA
-- 유건욱 : EDA
-- 조성현 : EDA
-- 최종민 : EDA
+- 손수민 : EDA_Q(3), data preprocess, modeling
+- 유건욱 : EDA_Q(5), data preprocess, modeling
+- 조성현 : EDA_Q(1,2), data preprocess, modeling
+- 최종민 : EDA_Q(4), data preprocess, modeling
